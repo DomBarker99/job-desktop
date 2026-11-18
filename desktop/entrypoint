@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# The first thing that runs. As root: get the SSH server going. Then hand over
+# to start-desktop, which runs the desktop as the "desktop" user.
+set -Eeuo pipefail
+[[ $(id -u) == 0 ]] || { echo 'This has to start as root, to run the SSH server.' >&2; exit 1; }
+
+# Host keys are made once. When /etc is on a volume they stay the same from
+# then on, so SSH does not complain that the machine changed.
+ssh-keygen -A >/dev/null
+install -d -m 0755 /run/sshd
+
+# Public keys handed in from outside (a Kubernetes Secret, or a file mounted
+# by docker run). Keys I add myself in ~/.ssh/authorized_keys work as well.
+if [[ -r /run/ssh-keys/authorized_keys ]]; then
+    install -D -m 0644 -o root -g root /run/ssh-keys/authorized_keys /etc/ssh/authorized_keys.d/desktop
+elif [[ ! -s /etc/ssh/authorized_keys.d/desktop && ! -s /home/desktop/.ssh/authorized_keys ]]; then
+    echo 'No SSH public key yet. The desktop still starts; add a key to ~/.ssh/authorized_keys from its terminal.' >&2
+fi
+
+# A new, empty /home volume has no home folder in it yet.
+if [[ ! -d /home/desktop ]]; then
+    install -d -m 0700 -o desktop -g desktop /home/desktop
+    cp -a /etc/skel/. /home/desktop/
+    chown -R desktop:desktop /home/desktop
+fi
+
+/usr/sbin/sshd -t
+/usr/sbin/sshd -E /var/log/sshd.log
+
+export HOME=/home/desktop USER=desktop LOGNAME=desktop
+cd "$HOME"
+# If the desktop stops, the container stops, and whatever runs it starts it again.
+exec runuser -u desktop -- /desktop/start-desktop

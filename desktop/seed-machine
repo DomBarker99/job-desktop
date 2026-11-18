@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Makes the container behave like a machine with a disk.
+#
+# A container forgets everything outside its volumes when it restarts: every
+# "apt install", every file in /etc. To keep them, the folders a Debian system
+# changes are put on one volume. This script fills that volume from the image
+# the first time, and does nothing on every start after that.
+#
+#   Usage: seed-machine /machine      (the volume, mounted whole at /machine)
+#
+# Afterwards the desktop container mounts the volume's folders in place:
+#   /machine/etc -> /etc    /machine/usr -> /usr    /machine/var -> /var
+#   /machine/opt -> /opt    /machine/home -> /home  /machine/root -> /root
+#   /machine/srv -> /srv
+#
+# What follows from that:
+#   - Whatever I install or change stays, like on a real computer.
+#   - A newer image does NOT update the system: /usr on the volume wins. The
+#     system is updated from inside, with apt. Only /desktop (these scripts)
+#     comes from the image on every start.
+#   - To start over from the image, delete the volume.
+set -Eeuo pipefail
+target=${1:?Usage: seed-machine VOLUME_DIRECTORY}
+[[ -d $target ]] || { echo "$target is not a folder." >&2; exit 1; }
+# One marker per folder, written only after its copy finished, so a copy that
+# was cut off is done again. The markers sit beside the folders, out of sight
+# of the running machine.
+mkdir -p "$target/.seeded"
+for dir in etc usr var opt home root srv; do
+    [[ -e "$target/.seeded/$dir" ]] && continue
+    echo "First start: copying /$dir onto the volume..."
+    mkdir -p "$target/$dir"
+    cp -a "/$dir/." "$target/$dir/"
+    touch "$target/.seeded/$dir"
+done
+sync
+echo 'The machine is on the volume.'

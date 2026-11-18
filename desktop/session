@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Runs inside the GNOME session's own D-Bus. Turns off the lock screen and the
+# idle blanking (there is no password to unlock with), then starts GNOME.
+set -Eeuo pipefail
+# Terminals and SSH logins read this file to find the running session.
+printf '%s\n' "$DBUS_SESSION_BUS_ADDRESS" > "$XDG_RUNTIME_DIR/session-bus.address"
+gsettings set org.gnome.desktop.screensaver lock-enabled false
+gsettings set org.gnome.desktop.lockdown disable-lock-screen true
+gsettings set org.gnome.desktop.session idle-delay 0
+# No "tour" window after a GNOME upgrade.
+gsettings set org.gnome.shell welcome-dialog-last-shown-version "$(gnome-shell --version | awk '{print $NF}')"
+exec gnome-session --session=gnome --disable-acceleration-check

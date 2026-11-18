@@ -1,0 +1,75 @@
+# Everything the image installs, one package per line.
+# Installed without "recommended" extras to keep GNOME from pulling in a
+# display manager, a network manager and the like, none of which work in a
+# container. Packages I install later with apt get their extras as usual.
+
+# The GNOME desktop: the shell, its settings, a terminal, a file manager,
+# a text editor and a browser.
+gnome-shell
+gnome-session
+gnome-session-xsession
+gnome-settings-daemon
+gnome-control-center
+gnome-keyring
+gnome-terminal
+gnome-text-editor
+nautilus
+firefox-esr
+dconf-cli
+xdg-utils
+xdg-user-dirs
+
+# What draws the desktop and shows it in a web page.
+tigervnc-standalone-server
+novnc
+websockify
+dbus-x11
+dbus-user-session
+xauth
+x11-xserver-utils
+x11-utils
+libgl1-mesa-dri
+
+# Fonts.
+fonts-cantarell
+fonts-dejavu
+fonts-liberation
+fonts-noto-color-emoji
+fontconfig
+
+# SSH.
+openssh-server
+openssh-client
+
+# What a normal Debian install has that the container base image leaves out.
+tini
+sudo
+locales
+tzdata
+ca-certificates
+curl
+wget
+gnupg
+git
+nano
+vim-tiny
+less
+man-db
+manpages
+bash-completion
+file
+procps
+psmisc
+iproute2
+iputils-ping
+bind9-dnsutils
+netcat-openbsd
+rsync
+zip
+unzip
+xz-utils
+bzip2
+zstd
+tmux
+htop
+python3
