@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # seat: give an agent its own screen on this machine.
 #
-# Screen :1 is the management screen (GNOME, started by start-desktop). Every
-# seat added here is one more screen beside it, with its own pointer, keyboard
+# Screen :1 is the machine's own screen (started by start-desktop; no desktop on
+# it unless the full GNOME one was asked for). Every seat added here is one
+# more screen beside it, with its own pointer, keyboard
 # and clipboard, so agents can work at the same time without touching each
 # other or me. A seat is five small things, started together:
 #
@@ -75,7 +76,7 @@ write_page() {
         echo 'a{display:block;background:#fff;border:1px solid #dde1e6;border-radius:10px;padding:14px 16px;margin:10px 0;color:#1c2530;text-decoration:none}'
         echo 'a:hover{border-color:#2f6fb5}a b{display:block}a span{color:#55606c;font-size:14px}</style>'
         echo '<main><h1>job-desktop</h1><p>One screen per line. Each opens in this tab.</p>'
-        echo "<a href=\"${link}management\"><b>management</b><span>screen :1 &middot; mine: GNOME, terminal, OpenClaw's page</span></a>"
+        echo "<a href=\"${link}management\"><b>management</b><span>screen :1 &middot; the machine's own: nothing to do here, unless a program like Nextcloud asks something</span></a>"
         while read -r name n; do
             if [[ -n ${name:-} ]]; then echo "<a href=\"${link}${name}\"><b>${name}</b><span>screen :${n} &middot; an agent's seat</span></a>"; fi
         done < "$list"

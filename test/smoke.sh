@@ -11,6 +11,8 @@
 #   - SSH refuses a password
 #   - "seat add" gives a second screen with its own window manager, listed on
 #     the web page and reachable through it
+#   - a start-up entry in ~/.config/autostart is run, with no desktop to run it
+#   - the full GNOME desktop still comes up when it is asked for
 # Part 2, the machine on a volume (how the cluster runs it):
 #   - seed-machine fills the volume
 #   - a package installed with apt, a file in /etc and the SSH host key are
@@ -110,6 +112,7 @@ docker cp "$name:/tmp/desktop-screen.png" "$artifacts/desktop-screen.png" >/dev/
 # the screen, its window manager and the web page's route to it are checked.
 docker exec --user 1000:1000 "$name" seat add demo
 docker exec --user 1000:1000 "$name" bash -c '
+    set -e
     xdpyinfo -display :2 >/dev/null
     for attempt in $(seq 1 20); do pgrep -u 1000 -x openbox >/dev/null && break; sleep 1; done
     pgrep -u 1000 -x openbox >/dev/null
@@ -138,6 +141,31 @@ assert b'RFB 003' in greeting('demo'), 'the web page cannot reach the seat'
 assert b'101' not in greeting('no-such-screen'), 'an unknown screen name was let through'
 print('The web page reaches the seat by name, and refuses a name it does not know.')
 PY
+# Start-up entries. Screen 1 has no desktop by default, so desktop/session runs
+# them itself. Put one in place, restart the container, and see that it ran.
+docker exec --user 1000:1000 "$name" bash -c '
+    set -e
+    mkdir -p ~/.config/autostart
+    printf "[Desktop Entry]\nType=Application\nName=Smoke test\nExec=/bin/bash -c \"echo started > /home/desktop/autostart-ran\"\n" > ~/.config/autostart/smoke.desktop
+    printf "[Desktop Entry]\nType=Application\nName=Off\nHidden=true\nExec=/bin/bash -c \"echo no > /home/desktop/autostart-hidden-ran\"\n" > ~/.config/autostart/off.desktop
+'
+docker restart -t 20 "$name" >/dev/null
+wait_until_up "$name"
+docker exec --user 1000:1000 "$name" bash -c '
+    set -e
+    for attempt in $(seq 1 15); do test -e ~/autostart-ran && break; sleep 1; done
+    test "$(cat ~/autostart-ran)" = started
+    test ! -e ~/autostart-hidden-ran
+    pgrep -u 1000 -x openbox >/dev/null
+    ! pgrep -u 1000 -x gnome-shell >/dev/null
+'
+
+# The full desktop, for when it is wanted back.
+docker run -d --name "$name-gnome" --shm-size=1g -e DESKTOP_SESSION_KIND=gnome "$image" >/dev/null
+containers+=("$name-gnome")
+wait_until_up "$name-gnome"
+docker exec "$name-gnome" pgrep -u 1000 -x gnome-shell >/dev/null
+docker stop -t 20 "$name-gnome" >/dev/null
 # No host key may be baked into the image; each machine makes its own.
 docker run --rm --entrypoint bash "$image" -c 'test -z "$(find /etc/ssh -maxdepth 1 -name "ssh_host_*" -print)"'
 docker stop -t 20 "$name" >/dev/null

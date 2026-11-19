@@ -6,8 +6,11 @@
 #   Web page (noVNC)   port 6080   no password, no login page
 #   SSH                port 22     user "desktop", keys only, passwordless sudo
 #
-# Screen :1 is mine. Each agent gets a screen of its own beside it, made with
-# the "seat" command (desktop/seat explains it). The web page lists them all.
+# Screen :1 is the machine's own, and by default has no desktop on it: Openbox
+# and my start-up entries, nothing else. DESKTOP_SESSION_KIND=gnome brings the
+# full GNOME desktop back (desktop/session). Each agent gets a screen of its
+# own beside it, made with the "seat" command (desktop/seat explains it). The
+# web page lists them all.
 #
 # THERE IS NO PASSWORD ON THE DESKTOP. Whoever can reach port 6080 has the
 # whole machine. Only ever put it somewhere private (my tailnet).

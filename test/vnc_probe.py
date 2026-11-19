@@ -49,8 +49,8 @@ with socket.create_connection(('127.0.0.1', 5901), timeout=20) as sock:
     width, height = struct.unpack('>HH', receive(sock, 4))
     receive(sock, 16)  # The server's own pixel format; a known one is asked for below.
     receive(sock, struct.unpack('>I', receive(sock, 4))[0])  # The desktop's name.
-    # Press Escape: GNOME starts in its overview, and this leaves it, so open
-    # windows show in the picture. It also proves the keyboard gets through.
+    # Press Escape: the GNOME desktop starts in its overview, and this leaves it,
+    # so open windows show in the picture. It also proves the keyboard gets through.
     for down in (1, 0):
         sock.sendall(struct.pack('>BBHI', 4, down, 0, 0xFF1B))
     time.sleep(2)
@@ -84,4 +84,6 @@ rgb[0::3], rgb[1::3], rgb[2::3] = screen[2::4], screen[1::4], screen[0::4]
 write_png('/tmp/desktop-screen.png', width, height, bytes(rgb))
 colours = {bytes(rgb[i:i + 3]) for i in range(0, len(rgb), 3 * 97)}
 print(f'VNC let me in with no password; {width}x{height} screen, {len(colours)} colours sampled.')
-assert len(colours) > 64, 'The screen is blank or not drawn'
+# A bare screen with one terminal window on it has few colours: the black
+# background, the window, and the greys of smoothed text. A blank screen has one.
+assert len(colours) >= 6, 'The screen is blank or not drawn'
