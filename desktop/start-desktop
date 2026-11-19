@@ -3,8 +3,11 @@
 #   1. a small D-Bus "system" bus, which GNOME expects and a container lacks
 #   2. Xtigervnc, the screen GNOME draws on, which also speaks VNC
 #   3. the GNOME session itself
-#   4. websockify, which serves the noVNC web page and passes it the screen
+#   4. websockify, which serves the noVNC web page and passes it the screens
 # If any of them stops, this script stops, and the container with it.
+#
+# This is screen :1, the management screen. Agents get screens of their own
+# beside it; /desktop/seat makes and starts those, and is called at the end.
 set -Eeuo pipefail
 [[ $(id -u) == 1000 ]] || { echo 'The desktop runs as the "desktop" user (1000).' >&2; exit 1; }
 
@@ -78,12 +81,24 @@ xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 || { echo 'The VNC screen did not s
 dbus-run-session -- /desktop/session &
 pids+=("$!")
 
-# 4. The web page, on every address of the container, port 6080.
-websockify --web=/usr/share/novnc/ 0.0.0.0:6080 127.0.0.1:5901 &
+# 4. The web page, on every address of the container, port 6080. One page
+# serves every screen: its front page lists them, and websockify finds the
+# screen a viewer asked for by name in a small file that "seat" keeps current.
+# noVNC's own files are linked into a folder we can write the front page into.
+web="$XDG_RUNTIME_DIR/web"
+mkdir -p "$web"
+for file in /usr/share/novnc/*; do
+    [[ ${file##*/} == index.html ]] || ln -sfn "$file" "$web/${file##*/}"
+done
+/desktop/seat _page
+websockify --web="$web" --token-plugin=TokenFile --token-source="$XDG_RUNTIME_DIR/vnc-tokens" 0.0.0.0:6080 &
 pids+=("$!")
 
 printf '%s\n' "${pids[@]}" > "$XDG_RUNTIME_DIR/desktop.pids"
 echo "GNOME is starting on $DISPLAY at $resolution. Web page: port 6080. SSH: port 22."
+
+# The agents' seats. Started on the side: a seat that fails must not stop the desktop.
+(/desktop/seat up > "$XDG_RUNTIME_DIR/seats.log" 2>&1 &)
 
 set +e
 wait -n "${pids[@]}"

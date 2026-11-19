@@ -9,10 +9,13 @@
 #   - VNC asks for no password, and the screen shows a drawn desktop
 #   - SSH works with a key, as "desktop", with sudo, and can open a window
 #   - SSH refuses a password
+#   - "seat add" gives a second screen with its own window manager, listed on
+#     the web page and reachable through it
 # Part 2, the machine on a volume (how the cluster runs it):
 #   - seed-machine fills the volume
 #   - a package installed with apt, a file in /etc and the SSH host key are
 #     all still there in a brand-new container on the same volume
+#   - a seat added in the first container comes back by itself in the second
 #
 # It makes its own throwaway SSH key and volume. Containers are stopped and
 # left, with the volume, for looking at afterwards; their names are printed.
@@ -68,7 +71,7 @@ HTTP_TEST_PORT="$http_port" python3 - <<'PY'
 import os
 import socket
 with socket.create_connection(('127.0.0.1', int(os.environ['HTTP_TEST_PORT'])), timeout=10) as sock:
-    sock.sendall(b'GET /websockify HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\n\r\n')
+    sock.sendall(b'GET /websockify?token=management HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\n\r\n')
     reply = sock.recv(4096)
     assert b'101 Switching Protocols' in reply, reply.split(b'\r\n')[0]
 print('The web page can reach the screen.')
@@ -103,6 +106,38 @@ done
 sleep 3
 docker exec -i "$name" python3 - < "$here/vnc_probe.py"
 docker cp "$name:/tmp/desktop-screen.png" "$artifacts/desktop-screen.png" >/dev/null
+# A seat: a second screen for an agent. cua-driver is not in the image, so only
+# the screen, its window manager and the web page's route to it are checked.
+docker exec --user 1000:1000 "$name" seat add demo
+docker exec --user 1000:1000 "$name" bash -c '
+    xdpyinfo -display :2 >/dev/null
+    for attempt in $(seq 1 20); do pgrep -u 1000 -x openbox >/dev/null && break; sleep 1; done
+    pgrep -u 1000 -x openbox >/dev/null
+    test "$(seat run demo -- printenv DISPLAY)" = :2
+    seat list | grep -E "^demo +:2 +yes"
+'
+curl --fail --silent "http://127.0.0.1:$http_port/" | grep -F 'token%3Ddemo' >/dev/null
+HTTP_TEST_PORT="$http_port" python3 - <<'PY'
+import os
+import socket
+def greeting(token):
+    with socket.create_connection(('127.0.0.1', int(os.environ['HTTP_TEST_PORT'])), timeout=10) as sock:
+        sock.sendall(('GET /websockify?token=%s HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\n\r\n' % token).encode())
+        sock.settimeout(5)
+        data = b''
+        try:
+            while b'RFB' not in data and len(data) < 600:
+                part = sock.recv(4096)
+                if not part:
+                    break
+                data += part
+        except OSError:
+            pass
+        return data
+assert b'RFB 003' in greeting('demo'), 'the web page cannot reach the seat'
+assert b'101' not in greeting('no-such-screen'), 'an unknown screen name was let through'
+print('The web page reaches the seat by name, and refuses a name it does not know.')
+PY
 # No host key may be baked into the image; each machine makes its own.
 docker run --rm --entrypoint bash "$image" -c 'test -z "$(find /etc/ssh -maxdepth 1 -name "ssh_host_*" -print)"'
 docker stop -t 20 "$name" >/dev/null
@@ -126,6 +161,7 @@ run_on_volume "$name-first"
 # Install something small the way I would, and change a file in /etc.
 docker exec "$name-first" bash -c 'apt-get update -qq && apt-get install -y -qq sl >/dev/null && echo kept > /etc/smoke-test-marker'
 docker exec --user 1000:1000 "$name-first" bash -c 'echo kept > "$HOME/smoke-test-marker"'
+docker exec --user 1000:1000 "$name-first" seat add demo
 host_key=$(docker exec "$name-first" cat /etc/ssh/ssh_host_ed25519_key.pub)
 docker stop -t 20 "$name-first" >/dev/null
 # A different container, as after a restart on the cluster.
@@ -139,6 +175,13 @@ docker exec "$name-second" bash -c '
 '
 [[ $(docker exec "$name-second" cat /etc/ssh/ssh_host_ed25519_key.pub) == "$host_key" ]] \
     || { echo 'The SSH host key changed between containers.' >&2; exit 1; }
+# The seat was only added in the first container. It has to be back here.
+seat_back=false
+for ((attempt=0; attempt<30; attempt++)); do
+    if docker exec --user 1000:1000 "$name-second" seat list | grep -E '^demo +:2 +yes' >/dev/null; then seat_back=true; break; fi
+    sleep 2
+done
+[[ $seat_back == true ]] || { echo 'The seat did not come back in the new container.' >&2; docker exec "$name-second" cat /tmp/desktop-runtime/seats.log; exit 1; }
 # Seeding again must change nothing.
 docker run --rm --entrypoint /desktop/seed-machine --mount "type=volume,source=$volume,target=/machine" "$image" /machine \
     | grep -Fx 'The machine is on the volume.' >/dev/null

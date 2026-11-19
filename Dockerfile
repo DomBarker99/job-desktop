@@ -6,6 +6,9 @@
 #   Web page (noVNC)   port 6080   no password, no login page
 #   SSH                port 22     user "desktop", keys only, passwordless sudo
 #
+# Screen :1 is mine. Each agent gets a screen of its own beside it, made with
+# the "seat" command (desktop/seat explains it). The web page lists them all.
+#
 # THERE IS NO PASSWORD ON THE DESKTOP. Whoever can reach port 6080 has the
 # whole machine. Only ever put it somewhere private (my tailnet).
 #
@@ -47,8 +50,8 @@ RUN useradd --uid 1000 --user-group --create-home --shell /bin/bash desktop \
     && visudo --check \
     && install -d -m 1777 /tmp/.X11-unix /tmp/.ICE-unix
 
-COPY --chmod=0755 desktop/entrypoint desktop/start-desktop desktop/session desktop/seed-machine desktop/healthcheck /desktop/
-COPY desktop/system-bus.conf /desktop/system-bus.conf
+COPY --chmod=0755 desktop/entrypoint desktop/start-desktop desktop/session desktop/seed-machine desktop/healthcheck desktop/seat /desktop/
+COPY desktop/system-bus.conf desktop/openbox-rc.xml /desktop/
 COPY config/sshd.conf /etc/ssh/sshd_config.d/desktop.conf
 COPY config/profile.sh /etc/profile.d/desktop.sh
 COPY config/index.html /usr/share/novnc/index.html

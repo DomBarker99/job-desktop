@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Openbox settings for an agent's seat. One rule: every ordinary window opens
+     filling the screen, so a screenshot shows the whole app and nothing hides
+     behind it. No keyboard shortcuts are defined, so every key reaches the app. -->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <applications>
+    <application class="*" type="normal">
+      <maximized>yes</maximized>
+    </application>
+  </applications>
+</openbox_config>

@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# seat: give an agent its own screen on this machine.
+#
+# Screen :1 is the management screen (GNOME, started by start-desktop). Every
+# seat added here is one more screen beside it, with its own pointer, keyboard
+# and clipboard, so agents can work at the same time without touching each
+# other or me. A seat is five small things, started together:
+#
+#   an X server      Xtigervnc :N, the screen itself (N is 2, 3, ...)
+#   a message bus    its own D-Bus session, so accessibility sees only this screen
+#   Openbox          a tiny window manager; without one nothing can be typed into
+#   cua-driver       bound to this screen; the agent's eyes and hands
+#   Firefox          with this seat's own profile folder
+#
+# All seats share the machine's files, programs, memory and network.
+#
+#   seat add NAME [--profile DIR]   make a seat, start it, remember it
+#   seat list                       every seat, and whether it is running
+#   seat up                         start every remembered seat that is not running
+#   seat start NAME | stop NAME     one seat
+#   seat firefox NAME [URL]         open that seat's Firefox again
+#   seat run NAME -- COMMAND...     run any program on that seat's screen
+#
+# Where things are kept:
+#   ~/.config/desktop-seats/seats            the list: one "name number" per line
+#   ~/.local/share/desktop-seats/NAME/       what a seat keeps (its Firefox profile)
+#   $XDG_RUNTIME_DIR/seats/NAME/             sockets and logs, gone at every restart
+#
+# To forget a seat, stop it and take its line out of the list. Its folder stays.
+set -Eeuo pipefail
+
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp/desktop-runtime}
+export XAUTHORITY=${XAUTHORITY:-$XDG_RUNTIME_DIR/Xauthority}
+export PATH="$HOME/.local/bin:$PATH"
+here=$(dirname "$(readlink -f "$0")")
+list="$HOME/.config/desktop-seats/seats"
+data="$HOME/.local/share/desktop-seats"
+runtime="$XDG_RUNTIME_DIR/seats"
+tokens="$XDG_RUNTIME_DIR/vnc-tokens"
+web="$XDG_RUNTIME_DIR/web"
+resolution=${VNC_RESOLUTION:-1600x1000}
+
+die() { echo "seat: $*" >&2; exit 1; }
+[[ $(id -u) != 0 ]] || die 'run this as the desktop user, not root.'
+mkdir -p "$(dirname "$list")" "$data" "$runtime"
+touch "$list"
+
+number_of() { awk -v n="$1" '$1 == n { print $2; found = 1 } END { exit !found }' "$list"; }
+screen_up() { xdpyinfo -display ":$1" >/dev/null 2>&1; }
+session_up() { [[ -s "$runtime/$1/session.pid" ]] && kill -0 "$(<"$runtime/$1/session.pid")" 2>/dev/null; }
+profile_of() {
+    if [[ -s "$data/$1/firefox-profile-path" ]]; then cat "$data/$1/firefox-profile-path"; else echo "$data/$1/firefox"; fi
+}
+
+# The viewer: one web page for every screen. websockify looks a screen up by
+# name in the tokens file, and re-reads that file on every connection, so a new
+# seat shows up without restarting anything.
+write_page() {
+    local name n
+    mkdir -p "$web"
+    {
+        echo 'management: 127.0.0.1:5901'
+        while read -r name n; do if [[ -n ${name:-} ]]; then echo "$name: 127.0.0.1:$((5900 + n))"; fi; done < "$list"
+    } > "$tokens.new"
+    mv "$tokens.new" "$tokens"
+    local link='vnc.html?autoconnect=1&reconnect=1&reconnect_delay=2000&resize=scale&path=websockify%3Ftoken%3D'
+    {
+        echo '<!doctype html><meta charset="utf-8"><title>job-desktop</title>'
+        if [[ ! -s $list ]]; then
+            # Only the management screen exists: go straight to it.
+            echo "<meta http-equiv=\"refresh\" content=\"0; url=${link}management\">"
+        fi
+        echo '<style>body{font-family:-apple-system,Helvetica,Arial,sans-serif;background:#f4f5f7;color:#1c2530;margin:0}'
+        echo 'main{max-width:560px;margin:60px auto;padding:0 20px}h1{font-size:22px}p{color:#55606c}'
+        echo 'a{display:block;background:#fff;border:1px solid #dde1e6;border-radius:10px;padding:14px 16px;margin:10px 0;color:#1c2530;text-decoration:none}'
+        echo 'a:hover{border-color:#2f6fb5}a b{display:block}a span{color:#55606c;font-size:14px}</style>'
+        echo '<main><h1>job-desktop</h1><p>One screen per line. Each opens in this tab.</p>'
+        echo "<a href=\"${link}management\"><b>management</b><span>screen :1 &middot; mine: GNOME, terminal, OpenClaw's page</span></a>"
+        while read -r name n; do
+            if [[ -n ${name:-} ]]; then echo "<a href=\"${link}${name}\"><b>${name}</b><span>screen :${n} &middot; an agent's seat</span></a>"; fi
+        done < "$list"
+        echo '</main>'
+    } > "$web/index.html.new"
+    mv "$web/index.html.new" "$web/index.html"
+}
+
+start_seat() {
+    local name=$1 n rt
+    n=$(number_of "$name") || die "no seat named $name. See: seat list"
+    rt="$runtime/$name"
+    mkdir -p "$rt" "$data/$name"
+    if ! screen_up "$n"; then
+        xauth -f "$XAUTHORITY" add ":$n" . "$(mcookie)" 2>/dev/null
+        setsid nohup Xtigervnc ":$n" -geometry "$resolution" -depth 24 -localhost yes \
+            -SecurityTypes None -auth "$XAUTHORITY" -nolisten tcp -AlwaysShared \
+            -rfbport "$((5900 + n))" > "$rt/x.log" 2>&1 < /dev/null &
+        for ((i = 0; i < 40; i++)); do screen_up "$n" && break; sleep 0.5; done
+        screen_up "$n" || die "screen :$n did not start. See $rt/x.log"
+    fi
+    if ! session_up "$name"; then
+        DISPLAY=":$n" setsid nohup dbus-run-session -- "$here/seat" _session "$name" \
+            > "$rt/session.log" 2>&1 < /dev/null &
+        echo $! > "$rt/session.pid"
+        for ((i = 0; i < 20; i++)); do [[ -s "$rt/bus.address" ]] && break; sleep 0.5; done
+    fi
+    echo "seat $name is up on screen :$n"
+}
+
+stop_seat() {
+    local name=$1 n rt
+    n=$(number_of "$name") || die "no seat named $name."
+    rt="$runtime/$name"
+    if session_up "$name"; then kill -TERM -- "-$(<"$rt/session.pid")" 2>/dev/null || true; fi
+    sleep 2
+    pkill -TERM -u "$(id -u)" -f "^Xtigervnc :$n " 2>/dev/null || true
+    rm -f "$rt/session.pid" "$rt/bus.address"
+    echo "seat $name stopped. Its files in $data/$name are untouched."
+}
+
+# Runs inside the seat's own D-Bus session, with DISPLAY already pointing at its screen.
+session() {
+    local name=$1 rt="$runtime/$1" profile
+    echo "$DBUS_SESSION_BUS_ADDRESS" > "$rt/bus.address"
+    if command -v openbox >/dev/null; then
+        openbox --config-file "$here/openbox-rc.xml" > "$rt/openbox.log" 2>&1 &
+    else
+        echo 'openbox is not installed: nothing can be typed into this screen. sudo apt install openbox' >&2
+    fi
+    if command -v cua-driver >/dev/null; then
+        cua-driver serve --socket "$rt/cua.sock" --pid-file "$rt/cua.pid" --grant existing-profile \
+            > "$rt/cua.log" 2>&1 &
+    else
+        echo 'cua-driver is not installed: the screen is there, but no agent can use it yet.' >&2
+    fi
+    if command -v firefox-esr >/dev/null; then
+        profile=$(profile_of "$name"); mkdir -p "$profile"
+        firefox-esr --no-remote --profile "$profile" > "$rt/firefox.log" 2>&1 &
+    fi
+    wait
+}
+
+# The environment of a seat, for starting more programs on it.
+enter() {
+    local name=$1 n
+    n=$(number_of "$name") || die "no seat named $name."
+    session_up "$name" || die "seat $name is not running. Run: seat start $name"
+    export DISPLAY=":$n" DBUS_SESSION_BUS_ADDRESS
+    DBUS_SESSION_BUS_ADDRESS=$(<"$runtime/$name/bus.address")
+}
+
+case ${1:-list} in
+    add)
+        name=${2:-}; profile=
+        if [[ ${3:-} == --profile ]]; then profile=${4:?--profile needs a folder}; fi
+        [[ $name =~ ^[a-z][a-z0-9-]{0,30}$ ]] || die 'a seat name is lower-case letters, digits and dashes, starting with a letter.'
+        [[ $name != management ]] || die '"management" is screen :1 already.'
+        if number_of "$name" >/dev/null; then die "seat $name already exists."; fi
+        n=$(awk 'BEGIN { m = 1 } $2 > m { m = $2 } END { print m + 1 }' "$list")
+        mkdir -p "$data/$name"
+        if [[ -n $profile ]]; then readlink -f "$profile" > "$data/$name/firefox-profile-path"; fi
+        echo "$name $n" >> "$list"
+        start_seat "$name"; write_page
+        echo "cua-driver socket: $runtime/$name/cua.sock"
+        echo "viewer: the job-desktop page now lists \"$name\"."
+        ;;
+    list)
+        printf '%-16s %-7s %-8s %s\n' NAME SCREEN RUNNING 'CUA-DRIVER SOCKET'
+        printf '%-16s %-7s %-8s %s\n' management :1 "$(screen_up 1 && echo yes || echo no)" "$HOME/.cache/cua-driver/cua-driver.sock"
+        while read -r name n; do
+            [[ -n ${name:-} ]] || continue
+            printf '%-16s %-7s %-8s %s\n' "$name" ":$n" "$(screen_up "$n" && session_up "$name" && echo yes || echo no)" "$runtime/$name/cua.sock"
+        done < "$list"
+        ;;
+    up)
+        while read -r name n; do if [[ -n ${name:-} ]]; then start_seat "$name"; fi; done < "$list"
+        write_page
+        ;;
+    start) start_seat "${2:?seat start NAME}"; write_page ;;
+    stop)  stop_seat "${2:?seat stop NAME}" ;;
+    firefox)
+        enter "${2:?seat firefox NAME [URL]}"
+        setsid nohup firefox-esr --no-remote --profile "$(profile_of "$2")" ${3:+"$3"} > "$runtime/$2/firefox.log" 2>&1 < /dev/null &
+        ;;
+    run)
+        enter "${2:?seat run NAME -- COMMAND}"; shift 2
+        if [[ ${1:-} == -- ]]; then shift; fi
+        [[ $# -gt 0 ]] || die 'seat run NAME -- COMMAND'
+        exec "$@"
+        ;;
+    _session) session "${2:?}" ;;
+    _page) write_page ;;
+    *) sed -n '2,/^set -E/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 1 ;;
+esac

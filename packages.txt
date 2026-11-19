@@ -30,6 +30,12 @@ x11-xserver-utils
 x11-utils
 libgl1-mesa-dri
 
+# For the agents' own screens (desktop/seat): a tiny window manager, and the
+# accessibility service that lets cua-driver read what is in a window.
+openbox
+at-spi2-core
+libatk-adaptor
+
 # Fonts.
 fonts-cantarell
 fonts-dejavu
