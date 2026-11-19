@@ -50,7 +50,7 @@ RUN useradd --uid 1000 --user-group --create-home --shell /bin/bash desktop \
     && visudo --check \
     && install -d -m 1777 /tmp/.X11-unix /tmp/.ICE-unix
 
-COPY --chmod=0755 desktop/entrypoint desktop/start-desktop desktop/session desktop/seed-machine desktop/healthcheck desktop/seat desktop/cua-mcp /desktop/
+COPY --chmod=0755 desktop/entrypoint desktop/start-desktop desktop/session desktop/seed-machine desktop/healthcheck desktop/seat desktop/cua-mcp desktop/mailbox /desktop/
 COPY desktop/system-bus.conf desktop/openbox-rc.xml /desktop/
 COPY config/sshd.conf /etc/ssh/sshd_config.d/desktop.conf
 COPY config/profile.sh /etc/profile.d/desktop.sh

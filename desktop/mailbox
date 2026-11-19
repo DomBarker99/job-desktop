@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# mailbox: the only door the mail agent has into my Gmail.
+#
+# It runs "gog gmail ..." (https://gogcli.sh) for one of my accounts, and lets
+# through only the commands a clean-up needs. The agent that uses it reads mail
+# written by strangers, and such mail can try to talk an agent into things. So
+# the limits are here, in a program, and not only in the agent's instructions.
+#
+#   mailbox accounts                        which accounts exist, and gog's view of them
+#   mailbox authorize NAME                  sign an account in to Google, once. For me,
+#                                           at a terminal; an agent cannot run it
+#   mailbox NAME search 'QUERY' [flags]     find messages (Gmail search syntax)
+#   mailbox NAME get ID [flags]             one message
+#   mailbox NAME thread get ID              one conversation
+#   mailbox NAME labels list|get|create
+#   mailbox NAME labels modify / messages modify / thread modify / batch modify
+#   mailbox NAME archive ID...              out of the inbox, kept
+#   mailbox NAME mark-read ID...
+#   mailbox NAME trash ID...                to Trash, where Gmail keeps it 30 days
+#   mailbox NAME settings filters list|get|create
+#   mailbox NAME url THREAD_ID
+#
+# Never let through, whatever the agent is told:
+#   - sending anything: send, reply, forward, drafts, auto-replies
+#   - deleting for good: "batch delete". Trash is the only removal
+#   - mail leaving the account: forwarding, auto-forwarding, delegates, send-as,
+#     and a filter with --forward
+#   - attachments, raw downloads, importing mail, deleting labels or filters
+#
+# Every call also gets: no sending (gog's own block), no prompts, and gog's
+# markers around text that came from an email, so the agent can tell it apart.
+#
+# Accounts are named in ~/.config/mailbox/accounts, one "name address" a line:
+#     personal me@example.com
+# Each has to be authorized once with "mailbox authorize NAME". The sign-in that
+# gog gets back is kept in gog's own encrypted file, unlocked with the password
+# in ~/.config/mailbox/keyring-password. (GNOME's keyring would ask for a
+# password in a window, which nothing here can answer.)
+# Every call that changes something is written to
+# ~/.local/state/mailbox/actions.log.
+set -Eeuo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+accounts="$HOME/.config/mailbox/accounts"
+log="$HOME/.local/state/mailbox/actions.log"
+export GOG_KEYRING_BACKEND=file
+if [[ -s "$HOME/.config/mailbox/keyring-password" ]]; then
+    GOG_KEYRING_PASSWORD=$(<"$HOME/.config/mailbox/keyring-password")
+    export GOG_KEYRING_PASSWORD
+fi
+
+refuse() { echo "mailbox: refused: $*" >&2; exit 2; }
+usage() { sed -n '2,/^set -E/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 1; }
+
+[[ $# -ge 1 ]] || usage
+if [[ $1 == accounts ]]; then
+    [[ -s $accounts ]] && cat "$accounts" || echo "(no accounts yet: $accounts is empty)"
+    echo '--- authorized in gog:'
+    gog auth list --no-input 2>&1 || true
+    exit 0
+fi
+[[ $# -ge 2 ]] || usage
+if [[ $1 == authorize ]]; then
+    # Google shows a consent page in a browser and then sends the browser to a
+    # "localhost" address that does not load. That address, pasted back here,
+    # is what completes the sign-in. It must never be pasted into a chat.
+    [[ -t 0 ]] || refuse 'authorize is for a person at a terminal.'
+    address=$(awk -v n="$2" '$1 == n { print $2; exit }' "$accounts" 2>/dev/null || true)
+    [[ -n $address ]] || refuse "no account named \"$2\". See: mailbox accounts"
+    exec gog auth add "$address" --services gmail --manual --force-consent
+fi
+name=$1; shift
+address=$(awk -v n="$name" '$1 == n { print $2; exit }' "$accounts" 2>/dev/null || true)
+[[ -n $address ]] || refuse "no account named \"$name\". See: mailbox accounts"
+
+# Nothing may forward mail out, in any command.
+for arg in "$@"; do
+    case $arg in --forward|--forward=*) refuse 'forwarding mail out of the account is never allowed.' ;; esac
+done
+
+changes=no
+case "$1 ${2:-}" in
+    'search '*|'get '*|'url '*) ;;
+    'messages search'|'thread get') ;;
+    'labels list'|'labels get') ;;
+    'settings filters')
+        case ${3:-} in
+            list|get) ;;
+            create) changes=yes ;;
+            *) refuse "\"settings filters ${3:-}\" is not allowed. Filters can be listed and created, not deleted." ;;
+        esac ;;
+    'labels create'|'labels modify'|'messages modify'|'thread modify'|'batch modify') changes=yes ;;
+    'archive '*|'mark-read '*|'trash '*) changes=yes ;;
+    'batch delete') refuse 'deleting for good is never allowed. Use: trash' ;;
+    *) refuse "\"$1 ${2:-}\" is not one of the allowed commands. Run mailbox with no arguments to see them." ;;
+esac
+
+if [[ $changes == yes ]]; then
+    mkdir -p "$(dirname "$log")"
+    printf '%s\t%s\t%s\n' "$(date -Is)" "$name" "$*" >> "$log"
+fi
+exec gog --account "$address" --gmail-no-send --wrap-untrusted --no-input gmail "$@"

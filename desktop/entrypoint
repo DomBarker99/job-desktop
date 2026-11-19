@@ -29,6 +29,8 @@ fi
 ln -sfn /desktop/seat /usr/local/bin/seat
 # The same for cua-mcp, which OpenClaw runs in place of "cua-driver mcp".
 ln -sfn /desktop/cua-mcp /usr/local/bin/cua-mcp
+# And for mailbox, the mail agent's only way into Gmail.
+ln -sfn /desktop/mailbox /usr/local/bin/mailbox
 
 /usr/sbin/sshd -t
 /usr/sbin/sshd -E /var/log/sshd.log
