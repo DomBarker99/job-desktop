@@ -134,6 +134,12 @@ session() {
     fi
     if command -v firefox-esr >/dev/null; then
         profile=$(profile_of "$name"); mkdir -p "$profile"
+        # Every restart of the pod kills Firefox without warning. By default it then
+        # opens on a "Restore Session?" page and waits for a click. This makes it
+        # reopen its tabs by itself. Only for a profile this script made.
+        if [[ ! -s "$data/$name/firefox-profile-path" && ! -e "$profile/user.js" ]]; then
+            echo 'user_pref("browser.sessionstore.max_resumed_crashes", -1);' > "$profile/user.js"
+        fi
         firefox-esr --no-remote --profile "$profile" > "$rt/firefox.log" 2>&1 &
     fi
     wait
