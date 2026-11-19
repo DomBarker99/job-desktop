@@ -27,6 +27,8 @@ fi
 # "seat" is run by hand and by agents, so it has to be on the PATH. /usr may be
 # on a volume that an older image filled, so the link is made at every start.
 ln -sfn /desktop/seat /usr/local/bin/seat
+# The same for cua-mcp, which OpenClaw runs in place of "cua-driver mcp".
+ln -sfn /desktop/cua-mcp /usr/local/bin/cua-mcp
 
 /usr/sbin/sshd -t
 /usr/sbin/sshd -E /var/log/sshd.log

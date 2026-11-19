@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""cua-mcp: run "cua-driver mcp" with one fix for Claude.
+
+Usage, wherever "cua-driver mcp" would be used:
+
+    cua-mcp --socket /tmp/desktop-runtime/seats/NAME/cua.sock
+
+Why it exists. When a cua-driver step fails, the answer is marked as an error
+and still carries a screenshot, which is useful: it shows the window after the
+failure. Claude's API refuses any request whose history holds an error result
+with a picture in it ("all content must be type text if is_error is true").
+One such answer therefore breaks the whole conversation: every later message
+in that session is refused too.
+
+What it does. It sits between OpenClaw and cua-driver and passes everything
+through untouched, except an answer that is both an error and has something
+other than text in it. That answer keeps its picture and its words, gets a
+first line saying that the call failed, and loses the error mark. The agent
+still learns that it failed, and still sees the screen.
+
+Nothing else is changed, and nothing is stored.
+"""
+import json
+import subprocess
+import sys
+import threading
+
+NOTE = "THIS TOOL CALL FAILED. What follows is cua-driver's own error, and the screen after the failure.\n"
+
+
+def fix(message):
+    """Return the message, changed only if it is an error result with a non-text part."""
+    result = message.get("result") if isinstance(message, dict) else None
+    if not isinstance(result, dict) or result.get("isError") is not True:
+        return message
+    content = result.get("content")
+    if not isinstance(content, list):
+        return message
+    if all(isinstance(part, dict) and part.get("type") == "text" for part in content):
+        return message
+    result["isError"] = False
+    result["content"] = [{"type": "text", "text": NOTE}] + content
+    return message
+
+
+def main():
+    child = subprocess.Popen(
+        ["cua-driver", "mcp", *sys.argv[1:]],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
+
+    def requests():
+        # OpenClaw to cua-driver: passed through as it comes.
+        try:
+            for line in sys.stdin.buffer:
+                child.stdin.write(line)
+                child.stdin.flush()
+        except (BrokenPipeError, ValueError):
+            pass
+        finally:
+            try:
+                child.stdin.close()
+            except OSError:
+                pass
+
+    threading.Thread(target=requests, daemon=True).start()
+
+    # cua-driver to OpenClaw: one JSON message per line.
+    out = sys.stdout.buffer
+    for line in child.stdout:
+        if b'"isError"' in line:
+            try:
+                line = json.dumps(fix(json.loads(line)), separators=(",", ":")).encode() + b"\n"
+            except ValueError:
+                pass
+        try:
+            out.write(line)
+            out.flush()
+        except BrokenPipeError:
+            break
+    sys.exit(child.wait())
+
+
+if __name__ == "__main__":
+    main()
